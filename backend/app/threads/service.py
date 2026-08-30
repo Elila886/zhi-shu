@@ -8,7 +8,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Thread
-from app.db.pgvector_utils import delete_document_from_pgvector, search_documents_in_pgvector
+from app.db.pgvector_utils import delete_document_chunks_by_thread_id
 
 from .schemas import ThreadUpdate
 
@@ -86,12 +86,7 @@ async def delete_thread(
 
     try:
         logger.info(f"Attempting to delete documents related to thread_id {thread_id}")
-        document_chunks = await search_documents_in_pgvector(filter={"thread_id": str(thread_id)})
-        if not document_chunks:
-            logger.warning(f"Document chunks related to thread {thread_id} not found in PGVector.")
-        else:
-            doc_ids_to_delete = [doc.metadata["id"] for doc in document_chunks]
-            await delete_document_from_pgvector(doc_ids_to_delete)
-            logger.info(f"Successfully deleted all document chunks related to thread_id: {thread_id} from PGVector.")
+        deleted_chunks = await delete_document_chunks_by_thread_id(thread_id)
+        logger.info("Successfully deleted {} document chunks for thread {}.", deleted_chunks, thread_id)
     except Exception as e:
         logger.error(f"Failed to delete documents related to thread {thread_id} from PGVector: {str(e)}")

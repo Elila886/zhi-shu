@@ -1,0 +1,12 @@
+{
+  "name": "@zhishu/shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  }
+}

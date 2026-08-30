@@ -6,6 +6,7 @@ from app.chat.routes import chat_router
 from app.documents.routes import document_router
 from app.lifespan import lifespan
 from app.middleware import register_middleware
+from app.public_config import public_config_router
 from app.threads.routes import thread_router
 from app.users.routes import user_router
 
@@ -31,3 +32,4 @@ app.include_router(thread_router, prefix=f"{version_prefix}/threads", tags=["THR
 app.include_router(chat_router, prefix=f"{version_prefix}/chat", tags=["CHAT"])
 app.include_router(document_router, prefix=f"{version_prefix}/documents", tags=["DOCUMENTS"])
 app.include_router(admin_router, prefix=f"{version_prefix}/admin", tags=["ADMIN"])
+app.include_router(public_config_router, prefix=f"{version_prefix}/config", tags=["CONFIG"])

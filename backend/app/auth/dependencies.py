@@ -9,6 +9,7 @@ from app.db.models import User
 from app.users import service as user_service
 
 from .schemas import TokenData
+from .session_service import get_active_session
 from .utils import decode_token
 
 
@@ -52,9 +53,9 @@ class RefreshTokenBearer(TokenBearer):
 RefreshTokenBearerDep = Annotated[TokenData, Depends(RefreshTokenBearer())]
 
 
-async def get_current_user(token_data: AccessTokenBearerDep, session: SessionDep) -> User:
-    user_email = token_data.user.email
-    current_user = await user_service.get_user_by_email(user_email, session)
+async def _resolve_token_user(token_data: TokenData, session: SessionDep) -> User:
+    await get_active_session(session, token_data)
+    current_user = await user_service.get_user_by_email(token_data.user.email, session)
     if current_user is None:
         raise HTTPException(status_code=404, detail="User not found")
     if not current_user.is_active:
@@ -65,21 +66,33 @@ async def get_current_user(token_data: AccessTokenBearerDep, session: SessionDep
     return current_user
 
 
+async def get_current_user(token_data: AccessTokenBearerDep, session: SessionDep) -> User:
+    current_user = await _resolve_token_user(token_data, session)
+    if token_data.surface != "user":
+        raise HTTPException(status_code=401, detail="User access token required")
+    return current_user
+
+
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
 OAuth2PasswordRequestFormDep = Annotated[OAuth2PasswordRequestForm, Depends()]
 
 
-async def get_admin_user(current_user: CurrentUserDep) -> User:
+async def get_admin_user(token_data: AccessTokenBearerDep, session: SessionDep) -> User:
+    current_user = await _resolve_token_user(token_data, session)
     if current_user.role not in {"admin", "super_admin"}:
         raise HTTPException(status_code=403, detail="Administrator permission required")
-    return current_user
-
-
-async def get_super_admin_user(current_user: CurrentUserDep) -> User:
-    if current_user.role != "super_admin":
-        raise HTTPException(status_code=403, detail="Super administrator permission required")
+    if token_data.surface != "admin":
+        raise HTTPException(status_code=401, detail="Administrator access token required")
     return current_user
 
 
 AdminUserDep = Annotated[User, Depends(get_admin_user)]
+
+
+async def get_super_admin_user(admin_user: AdminUserDep) -> User:
+    if admin_user.role != "super_admin":
+        raise HTTPException(status_code=403, detail="Super administrator permission required")
+    return admin_user
+
+
 SuperAdminUserDep = Annotated[User, Depends(get_super_admin_user)]

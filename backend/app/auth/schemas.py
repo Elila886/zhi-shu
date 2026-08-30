@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
@@ -14,7 +14,6 @@ class SignupResponse(BaseModel):
 class LoginResponse(BaseModel):
     message: str
     access_token: str
-    refresh_token: str
     user: dict[str, str]
 
 
@@ -36,6 +35,8 @@ class TokenData(BaseModel):
     exp: int
     jti: UUID
     refresh: bool
+    sid: UUID
+    surface: Literal["user", "admin"]
 
 
 class VerifyEmailResponse(BaseModel):

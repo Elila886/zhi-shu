@@ -129,3 +129,22 @@ async def delete_document_chunks_by_document_id(document_id: UUID) -> int:
         deleted_count = result.rowcount or 0
         logger.info("Deleted {} PGVector chunks for document {}.", deleted_count, document_id)
         return deleted_count
+
+
+async def delete_document_chunks_by_thread_id(thread_id: UUID) -> int:
+    """Delete every vector chunk belonging to a thread without similarity search."""
+    async with vector_store._make_async_session() as session:  # type: ignore[attr-defined]
+        collection = await vector_store.aget_collection(session)
+        if collection is None:
+            logger.warning("PGVector collection not found while deleting thread {}.", thread_id)
+            return 0
+
+        statement = delete(vector_store.EmbeddingStore).where(  # type: ignore[attr-defined]
+            vector_store.EmbeddingStore.collection_id == collection.uuid,  # type: ignore[attr-defined]
+            vector_store.EmbeddingStore.cmetadata["thread_id"].astext == str(thread_id),  # type: ignore[attr-defined]
+        )
+        result = await session.execute(statement)
+        await session.commit()
+        deleted_count = result.rowcount or 0
+        logger.info("Deleted {} PGVector chunks for thread {}.", deleted_count, thread_id)
+        return deleted_count

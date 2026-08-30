@@ -1,5 +1,4 @@
-import json
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncIterator
 from uuid import UUID
 
 from app.db.checkpointer import get_checkpointer
@@ -7,18 +6,8 @@ from fastapi import HTTPException
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
-from .langgraph_agent import build_retrival_graph, create_model
+from .langgraph_agent import build_retrival_graph
 from .schemas import Message, PromptInput
-
-
-async def simple_chat_stream(prompt_input: PromptInput) -> AsyncGenerator:
-    model = create_model(model_name=prompt_input.model_name, streaming=True)
-    async for chunk in model.astream([HumanMessage(content=prompt_input.prompt)]):
-        if content := chunk.content:
-            response = {"type": "llm_chunk", "content": str(content)}
-            yield json.dumps(response) + "\n"
-
-
 async def chat_stream(thread_id: UUID, prompt_input: PromptInput, user_id: UUID) -> AsyncIterator:
     """
     Streams the agent's execution steps and final response.

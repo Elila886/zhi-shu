@@ -1,0 +1,132 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: e2e
+      POSTGRES_PASSWORD: e2e
+      POSTGRES_DB: zhishu_e2e
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U e2e -d zhishu_e2e"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [e2e]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: test
+    entrypoint: ["python", "-m", "tests.e2e_server"]
+    environment:
+      ENVIRONMENT: test
+      OPENAI_API_KEY: ${E2E_OPENAI_API_KEY:-test-key}
+      TAVILY_API_KEY: ${E2E_TAVILY_API_KEY:-test-key}
+      MODEL_PROVIDER: ${E2E_MODEL_PROVIDER:-openai}
+      MODEL_NAMES: ${E2E_MODEL_NAMES:-["test-model"]}
+      MODEL_BASE_URL: ${E2E_MODEL_BASE_URL:-}
+      EMBEDDINGS_MODEL_NAME: ${E2E_EMBEDDINGS_MODEL_NAME:-text-embedding-3-small}
+      EMBEDDINGS_BASE_URL: ${E2E_EMBEDDINGS_BASE_URL:-}
+      TOKEN_BEARER_URL: /api/v1/auth/login
+      JWT_SECRET: e2e-only-jwt-secret-that-is-not-used-outside-tests
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRY_MINS: 5
+      REFRESH_TOKEN_EXPIRY_DAYS: 1
+      FRONTEND_ORIGINS: '["http://localhost:18511","http://localhost:18512"]'
+      COOKIE_SECURE: "false"
+      COOKIE_SAMESITE: lax
+      REFRESH_COOKIE_NAME: zhishu_refresh
+      ADMIN_REFRESH_COOKIE_NAME: zhishu_admin_refresh
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: e2e
+      POSTGRES_PASSWORD: e2e
+      POSTGRES_DATABASE: zhishu_e2e
+      PGVECTOR_COLLECTION_NAME: zhishu_e2e
+      SUPER_ADMIN_EMAILS: '[]'
+      E2E_USER_EMAIL: ${E2E_USER_EMAIL:?set E2E_USER_EMAIL for the isolated stack}
+      E2E_USER_PASSWORD: ${E2E_USER_PASSWORD:?set E2E_USER_PASSWORD for the isolated stack}
+      E2E_ADMIN_EMAIL: ${E2E_ADMIN_EMAIL:?set E2E_ADMIN_EMAIL for the isolated stack}
+      E2E_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD:?set E2E_ADMIN_PASSWORD for the isolated stack}
+      E2E_SUPER_ADMIN_EMAIL: ${E2E_SUPER_ADMIN_EMAIL:?set E2E_SUPER_ADMIN_EMAIL for the isolated stack}
+      E2E_SUPER_ADMIN_PASSWORD: ${E2E_SUPER_ADMIN_PASSWORD:?set E2E_SUPER_ADMIN_PASSWORD for the isolated stack}
+    ports:
+      - "${E2E_BACKEND_PORT:-18001}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/api/v1/docs"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [e2e]
+
+  frontend:
+    build:
+      context: ./web
+      dockerfile: apps/user/Dockerfile
+    ports:
+      - "${E2E_FRONTEND_PORT:-18511}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [e2e]
+
+  admin:
+    build:
+      context: ./web
+      dockerfile: apps/admin/Dockerfile
+    ports:
+      - "${E2E_ADMIN_PORT:-18512}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [e2e]
+
+  legacy-frontend-visual:
+    profiles: ["visual-legacy"]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      BACKEND_BASE_URL: http://backend:8000/api/v1
+      MODEL_NAMES: ${E2E_MODEL_NAMES:-["test-model"]}
+    ports:
+      - "${E2E_LEGACY_FRONTEND_PORT:-18601}:8501"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8501/_stcore/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [e2e]
+
+  legacy-admin-visual:
+    profiles: ["visual-legacy"]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    command: ["streamlit", "run", "admin/main.py", "--server.address", "0.0.0.0", "--server.port", "8502"]
+    environment:
+      BACKEND_BASE_URL: http://backend:8000/api/v1
+      MODEL_NAMES: ${E2E_MODEL_NAMES:-["test-model"]}
+    ports:
+      - "${E2E_LEGACY_ADMIN_PORT:-18602}:8502"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8502/_stcore/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [e2e]
+
+networks:
+  e2e:
+    driver: bridge

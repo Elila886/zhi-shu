@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-test}
       POSTGRES_DB: ${POSTGRES_DATABASE:-langgraph_db}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -22,6 +22,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: runtime
     container_name: langgraph_backend
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -37,7 +38,13 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
       - ACCESS_TOKEN_EXPIRY_MINS=${ACCESS_TOKEN_EXPIRY_MINS:-60}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
       - REFRESH_TOKEN_EXPIRY_DAYS=${REFRESH_TOKEN_EXPIRY_DAYS:-1}
+      - FRONTEND_ORIGINS=${FRONTEND_ORIGINS:-["http://localhost:5173","http://localhost:5174","http://localhost:8501","http://localhost:8502"]}
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
+      - COOKIE_SAMESITE=${COOKIE_SAMESITE:-lax}
+      - REFRESH_COOKIE_NAME=${REFRESH_COOKIE_NAME:-zhishu_refresh}
+      - ADMIN_REFRESH_COOKIE_NAME=${ADMIN_REFRESH_COOKIE_NAME:-zhishu_admin_refresh}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
@@ -46,7 +53,7 @@ services:
       - PGVECTOR_COLLECTION_NAME=${PGVECTOR_COLLECTION_NAME:-my_collection}
       - SUPER_ADMIN_EMAILS=${SUPER_ADMIN_EMAILS:-[]}
     ports:
-      - "8000:8000"
+      - "${BACKEND_HOST_PORT:-8000}:8000"
     volumes:
       - ./logs:/app/logs
     depends_on:
@@ -58,17 +65,17 @@ services:
 
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: ./web
+      dockerfile: apps/user/Dockerfile
     container_name: langgraph_frontend
-    environment:
-      - BACKEND_BASE_URL=http://backend:8000/api/v1
-      # REMOVED: ${BACKEND_BASE_URL:-http://backend:8000/api/v1}
-      - MODEL_NAMES=${MODEL_NAMES:-["gpt-4o", "gpt-4o-mini"]}
     ports:
-      - "8501:8501"
-    volumes:
-      - ./logs:/app/logs
+      - "${FRONTEND_PORT:-8501}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
     depends_on:
       backend:
         condition: service_healthy
@@ -78,19 +85,15 @@ services:
 
   admin:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: ./web
+      dockerfile: apps/admin/Dockerfile
     container_name: langgraph_admin
-    command: ["streamlit", "run", "admin/main.py", "--server.address", "0.0.0.0", "--server.port", "8502"]
-    environment:
-      - BACKEND_BASE_URL=http://backend:8000/api/v1
-      - MODEL_NAMES=${MODEL_NAMES:-["gpt-4o", "gpt-4o-mini"]}
     ports:
-      - "${ADMIN_PORT:-8502}:8502"
+      - "${ADMIN_PORT:-8502}:80"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8502/_stcore/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       start_period: 5s
       retries: 3
     depends_on:

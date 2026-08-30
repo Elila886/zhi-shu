@@ -1,0 +1,55 @@
+services:
+  postgres-test:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: zhishu_test
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d zhishu_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks:
+      - zhishu_test_network
+
+  backend-test:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: test
+    environment:
+      - ENVIRONMENT=test
+      - OPENAI_API_KEY=test-key
+      - TAVILY_API_KEY=test-key
+      - MODEL_PROVIDER=openai
+      - MODEL_NAMES=["test-model"]
+      - EMBEDDINGS_MODEL_NAME=text-embedding-3-small
+      - TOKEN_BEARER_URL=/api/v1/auth/login
+      - JWT_SECRET=test-only-jwt-secret-that-is-not-used-outside-tests
+      - JWT_ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRY_MINS=5
+      - REFRESH_TOKEN_EXPIRY_DAYS=1
+      - FRONTEND_ORIGINS=["http://test"]
+      - COOKIE_SECURE=false
+      - COOKIE_SAMESITE=lax
+      - REFRESH_COOKIE_NAME=zhishu_refresh
+      - ADMIN_REFRESH_COOKIE_NAME=zhishu_admin_refresh
+      - POSTGRES_HOST=postgres-test
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=test
+      - POSTGRES_PASSWORD=test
+      - POSTGRES_DATABASE=zhishu_test
+      - PGVECTOR_COLLECTION_NAME=zhishu_test
+      - SUPER_ADMIN_EMAILS=[]
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+    networks:
+      - zhishu_test_network
+
+networks:
+  zhishu_test_network:
+    driver: bridge

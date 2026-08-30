@@ -1,4 +1,4 @@
-FROM python:3.12.11-slim-bookworm
+FROM python:3.12.11-slim-bookworm AS base
 
 WORKDIR /app
 
@@ -12,6 +12,17 @@ RUN pip install uv
 COPY requirements.txt .
 
 RUN uv pip install --system --no-cache-dir -r requirements.txt
+
+FROM base AS test
+
+COPY requirements-test.txt .
+RUN uv pip install --system --no-cache-dir -r requirements-test.txt
+COPY ./app/ ./app/
+COPY ./tests/ ./tests/
+
+ENTRYPOINT ["pytest", "-q"]
+
+FROM base AS runtime
 
 COPY ./app/ ./app/
 

@@ -1,6 +1,6 @@
 import shutil
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, UploadFile, status
 from loguru import logger
@@ -38,23 +38,25 @@ async def upload_document(thread_id: UUID, file: UploadFile, current_user: Curre
         logger.error("No file uploaded.")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No file uploaded.")
 
-    allowd_extensions = list(DOCUMENT_LOADER_MAPPING.keys())
-    message = f"Unsupported file type. Allowed types: {', '.join(allowd_extensions)}"
-    if Path(file.filename).suffix not in allowd_extensions:
+    allowed_extensions = list(DOCUMENT_LOADER_MAPPING.keys())
+    message = f"Unsupported file type. Allowed types: {', '.join(allowed_extensions)}"
+    safe_filename = Path(file.filename.replace("\\", "/")).name
+    extension = Path(safe_filename).suffix.lower()
+    if extension not in allowed_extensions:
         logger.error(message)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
 
     TEMP_DIR = BASE_DIR / "tmp"
     if not TEMP_DIR.exists():
         TEMP_DIR.mkdir()
-    temp_file_path = TEMP_DIR / file.filename
+    temp_file_path = TEMP_DIR / f"{uuid4()}_{safe_filename}"
     document_id = None
     chunk_ids = []
     try:
         with open(temp_file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         logger.info(f"File '{file.filename}' saved temporarily to '{temp_file_path}'.")
-        document_data = DocumetCreate(file_name=file.filename, thread_id=thread_id)
+        document_data = DocumetCreate(file_name=safe_filename, thread_id=thread_id)
         new_document = await document_service.insert_document(document_data, session)
         document_id = new_document.id
         chunk_ids = await index_document_to_pgvector(temp_file_path, document_id, thread_id, user_id)

@@ -24,16 +24,21 @@ class ChatStreamResponse(StreamingResponse):
     """
 
     def __init__(self, astream: AsyncIterable[dict[str, Any | Any]], **kwargs):
+        kwargs.setdefault("media_type", "application/x-ndjson")
         super().__init__(content=self.process_stream(astream), **kwargs)
 
     async def process_stream(self, astream: AsyncIterable[dict[str, Any | Any]]) -> AsyncGenerator[str, Any]:
-        async for stream_mode, chunk in astream:
-            if stream_mode == "messages":
-                yield self._handle_messages_stream(chunk)  # type: ignore
+        try:
+            async for stream_mode, chunk in astream:
+                if stream_mode == "messages":
+                    yield self._handle_messages_stream(chunk)  # type: ignore
 
-            elif stream_mode == "updates":
-                async for formatted_chunk in self._handle_updates_stream(chunk):  # type: ignore
-                    yield formatted_chunk
+                elif stream_mode == "updates":
+                    async for formatted_chunk in self._handle_updates_stream(chunk):  # type: ignore
+                        yield formatted_chunk
+        except Exception as exc:
+            logger.exception("Chat stream failed: {}", exc)
+            yield json.dumps({"type": "error", "content": "生成回答失败，请检查模型配置后重试。"}) + "\n"
 
     def _handle_messages_stream(self, chunk: tuple[AIMessageChunk | AIMessage, Any]) -> str:
         message = chunk[0]

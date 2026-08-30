@@ -32,10 +32,10 @@ async def get_user_by_username(username: str, session: AsyncSession) -> User | N
 
 async def create_user(user_data: UserCreate, session: AsyncSession) -> User:
     if await get_user_by_email(user_data.email, session):
-        raise HTTPException(status_code=403, detail="Email already exists.")
+        raise HTTPException(status_code=403, detail="该邮箱已被注册。")
 
     if await get_user_by_username(user_data.username, session):
-        raise HTTPException(status_code=403, detail="Username already exists.")
+        raise HTTPException(status_code=403, detail="该用户名已被使用。")
 
     new_user = User(**user_data.model_dump(exclude={"password"}))
     new_user.password_hash = hash_password(user_data.password)

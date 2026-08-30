@@ -1,8 +1,10 @@
 import logging
 from pathlib import Path
+from typing import Literal
+from urllib.parse import urlsplit
 
 from loguru import logger
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -25,6 +27,7 @@ logger.add(
 
 
 class Settings(BaseSettings):
+    environment: Literal["development", "test", "production"] = "development"
     api_key: SecretStr = Field(alias="OPENAI_API_KEY")
     deepseek_api_key: SecretStr | None = Field(default=None, alias="DEEPSEEK_API_KEY")
     tavily_api_key: str
@@ -46,6 +49,50 @@ class Settings(BaseSettings):
     postgres_database: str
     pgvector_collection_name: str
     super_admin_emails: list[str] = []
+    frontend_origins: list[str] = [
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:8501",
+        "http://localhost:8502",
+    ]
+    cookie_secure: bool = False
+    cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+    refresh_cookie_name: str = "zhishu_refresh"
+    admin_refresh_cookie_name: str = "zhishu_admin_refresh"
+
+    @model_validator(mode="after")
+    def validate_browser_security(self):
+        if not self.frontend_origins:
+            raise ValueError("FRONTEND_ORIGINS must contain at least one explicit origin")
+        normalized: list[str] = []
+        for origin in self.frontend_origins:
+            value = origin.strip()
+            parsed = urlsplit(value)
+            invalid_port = False
+            try:
+                parsed.port
+            except ValueError:
+                invalid_port = True
+            if (
+                value == "*"
+                or not value
+                or parsed.scheme not in {"http", "https"}
+                or not parsed.netloc
+                or parsed.hostname is None
+                or invalid_port
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError(f"Invalid credentialed CORS origin: {origin!r}")
+            if value not in normalized:
+                normalized.append(value)
+        self.frontend_origins = normalized
+        if self.environment == "production" and not self.cookie_secure:
+            raise ValueError("COOKIE_SECURE must be true in production")
+        return self
 
     @property
     def database_uri(self) -> str:

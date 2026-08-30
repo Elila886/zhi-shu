@@ -34,6 +34,10 @@ async def update_thread(thread_data: ThreadUpdate, thread_id: UUID, current_user
 
 @thread_router.delete("/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_thread(request: Request, thread_id: UUID, current_user: CurrentUserDep, session: SessionDep):
+    # Check ownership before initializing the checkpointer.  Besides avoiding
+    # unnecessary database work, this keeps unauthorized requests from
+    # touching chat state or the LangGraph persistence layer.
+    await thread_service.get_thread(thread_id, current_user.id, session)
     checkpointer = await get_checkpointer()
     request.app.state.checkpointer = checkpointer
     return await thread_service.delete_thread(thread_id, current_user.id, session, checkpointer)

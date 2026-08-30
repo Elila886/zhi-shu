@@ -1,0 +1,27 @@
+{
+  "name": "zhishu-web",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:user": "npm run dev --workspace @zhishu/user-web",
+    "dev:admin": "npm run dev --workspace @zhishu/admin-web",
+    "build": "npm run build --workspaces --if-present",
+    "build:user": "npm run build --workspace @zhishu/user-web",
+    "build:admin": "npm run build --workspace @zhishu/admin-web",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "generate:api": "openapi-typescript http://localhost:18000/api/v1/openapi.json -o packages/shared/src/generated/openapi.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:non-ai": "playwright test --project non-ai",
+    "test:e2e:admin": "playwright test --project admin",
+    "test:e2e:real-ai": "playwright test --project real-ai",
+    "test:e2e:mobile": "playwright test --project mobile"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "openapi-typescript": "^7.13.0"
+  }
+}

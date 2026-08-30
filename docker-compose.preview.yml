@@ -1,0 +1,42 @@
+services:
+  frontend-preview:
+    profiles: ["preview"]
+    build:
+      context: ./web
+      dockerfile: apps/user/Dockerfile
+    container_name: langgraph_frontend_preview
+    ports:
+      - "${PREVIEW_FRONTEND_PORT:-8511}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - langgraph_network
+    restart: on-failure:3
+
+  admin-preview:
+    profiles: ["preview"]
+    build:
+      context: ./web
+      dockerfile: apps/admin/Dockerfile
+    container_name: langgraph_admin_preview
+    ports:
+      - "${PREVIEW_ADMIN_PORT:-8512}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - langgraph_network
+    restart: on-failure:3

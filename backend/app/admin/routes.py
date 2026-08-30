@@ -7,6 +7,7 @@ from app.auth.dependencies import AdminUserDep, SuperAdminUserDep
 from app.db.main import SessionDep
 from app.db.models import Document
 from app.db.pgvector_utils import delete_document_chunks_by_document_id
+from app.users.schemas import UserPublic
 
 from . import service
 from .schemas import PasswordReset, UserAdminUpdate
@@ -16,6 +17,12 @@ admin_router = APIRouter()
 
 def _ip(request: Request) -> str | None:
     return request.client.host if request.client else None
+
+
+@admin_router.get("/me", response_model=UserPublic)
+async def get_admin_profile(admin: AdminUserDep):
+    """Return the administrator profile without crossing into the user surface."""
+    return admin
 
 
 @admin_router.get("/overview")

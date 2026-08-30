@@ -69,3 +69,18 @@ class AuditLog(Base):
     after_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), index=True)
+
+
+class RefreshSession(Base):
+    """Server-side record backing a rotated refresh-token cookie."""
+
+    __tablename__ = "refresh_sessions"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    surface: Mapped[str] = mapped_column(String(20), default="user", server_default="user")
+    current_jti: Mapped[UUID] = mapped_column(unique=True, index=True)
+    expires_at: Mapped[datetime]
+    revoked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())

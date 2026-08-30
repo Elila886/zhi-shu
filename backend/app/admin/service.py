@@ -7,6 +7,7 @@ from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.utils import hash_password
+from app.auth.session_service import revoke_user_sessions
 from app.db.models import AuditLog, Document, Thread, User
 
 
@@ -85,6 +86,8 @@ async def update_user(session: AsyncSession, actor: User, user_id: UUID, values:
         setattr(target, key, value)
     if target.is_active:
         target.disabled_reason = None
+    if not target.is_active or role_change:
+        await revoke_user_sessions(session, target.id)
     add_audit(session, actor, "user.update", "user", str(target.id), before, _snapshot(target), ip_address)
     await session.commit()
     await session.refresh(target)
@@ -98,6 +101,7 @@ async def reset_password(session: AsyncSession, actor: User, user_id: UUID, pass
     if target.role in {"admin", "super_admin"} and actor.role != "super_admin":
         raise HTTPException(status_code=403, detail="只有超级管理员可以重置管理员密码")
     target.password_hash = hash_password(password)
+    await revoke_user_sessions(session, target.id)
     add_audit(session, actor, "user.password_reset", "user", str(target.id), ip_address=ip_address)
     await session.commit()
 
