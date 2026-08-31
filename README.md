@@ -6,7 +6,7 @@
 
 项目从产品界面、后端 API、知识检索到部署配置均在本仓库内实现，README 内容以当前代码为准。
 
-![知枢首页](screenshots/home.png)
+![知枢未登录首页](screenshots/landing.png)
 
 ## 核心能力
 
@@ -95,7 +95,7 @@ docker compose down
 4. 生成过程以流式方式显示，工具调用和检索结果会随消息一同返回。
 5. 管理员登录独立管理端，进行用户、文档与审计记录维护。
 
-![登录后的知识问答界面](screenshots/home-authenticated.png)
+![登录后的知识问答界面](screenshots/chat.png)
 
 ## 本地开发
 
