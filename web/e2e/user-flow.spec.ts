@@ -345,3 +345,48 @@ test("real AI stop retains a streamed partial answer @real-ai", async ({ page })
     await cleanupAccount(page.request, account);
   }
 });
+
+test("authorized administrator can query a personnel profile from the chat page @real-ai", async ({ page, request }) => {
+  if (!realAiReady) {
+    throw new Error("environment blocked: real personnel E2E requires the same isolated real-AI configuration");
+  }
+  const target = newAccount("personnel");
+  const employeeNo = `E2E-${Date.now()}`;
+  const fullName = "E2E 人员验证";
+  const superAdmin = await apiLogin(request, superAdminEmail!, superAdminPassword!, true);
+  const manager = await apiLogin(request, adminEmail!, adminPassword!);
+  const signup = await request.post("/api/v1/auth/signup", { data: { ...target, first_name: "Personnel", last_name: "E2E" } });
+  expect(signup.status()).toBe(201);
+  const targetId = ((await signup.json()) as { user: { id: string } }).user.id;
+  try {
+    expect((await request.put(`/api/v1/admin/users/${targetId}/personnel-profile`, {
+      headers: auth(superAdmin),
+      data: { full_name: fullName, employee_no: employeeNo, department: "E2E 工程部", job_title: "验证工程师", work_email: null, work_phone: null, employment_status: "active" },
+    })).status()).toBe(200);
+    expect((await request.patch(`/api/v1/admin/users/${manager.user.id}/personnel-query-permission`, {
+      headers: auth(superAdmin), data: { enabled: true },
+    })).status()).toBe(200);
+    const thread = await request.post("/api/v1/threads/", { headers: auth(manager) });
+    expect(thread.status()).toBe(201);
+    const threadId = ((await thread.json()) as { id: string }).id;
+
+    await page.goto("/login");
+    await page.getByLabel("邮箱 *").fill(adminEmail!);
+    await page.getByLabel("密码 *").fill(adminPassword!);
+    await page.locator("main").getByRole("button", { name: "登录", exact: true }).click();
+    await expect(page.getByRole("button", { name: "退出登录" })).toBeVisible();
+    await page.goto(`/chat/${threadId}`);
+    const composer = page.getByPlaceholder("输入问题，或拖入资料以建立本会话知识库…");
+    await composer.fill(`查询${fullName}的基本信息`);
+    await page.getByRole("button", { name: "发送" }).click();
+    await expect(page.locator(".tool-steps")).toContainText("query_personnel", { timeout: 90_000 });
+    const answer = page.locator("article.ai-message").last();
+    await expect(answer).toContainText("查询结果：", { timeout: 90_000 });
+    await expect(answer).toContainText(`工号：${employeeNo}`);
+    await expect(answer).toContainText("工作邮箱：未录入");
+  } finally {
+    await request.patch(`/api/v1/admin/users/${manager.user.id}/personnel-query-permission`, {
+      headers: auth(superAdmin), data: { enabled: false },
+    }).catch(() => undefined);
+  }
+});

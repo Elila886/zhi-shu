@@ -9,6 +9,7 @@ from app.users import service as user_service
 from app.users.schemas import UserCreate
 
 from .dependencies import OAuth2PasswordRequestFormDep
+from app.traffic_governance.dependencies import LoginRateLimitDep, RefreshRateLimitDep, SignupRateLimitDep
 from .schemas import LoginResponse, LogoutResponse, RefreshTokenResponse, SignupResponse, TokenData
 from .session_service import (
     create_refresh_session,
@@ -156,7 +157,7 @@ async def _logout_cookie(request: Request, response: Response, surface: str, ses
 
 
 @auth_router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
-async def create_user_account(user_data: UserCreate, session: SessionDep):
+async def create_user_account(user_data: UserCreate, session: SessionDep, _: SignupRateLimitDep):
     new_user = await user_service.create_user(user_data, session)
     return {"message": "Account Created!", "user": new_user}
 
@@ -167,6 +168,7 @@ async def login_users(
     form_data: OAuth2PasswordRequestFormDep,
     session: SessionDep,
     request: Request,
+    _: LoginRateLimitDep,
 ):
     payload, refresh_token = await _authenticate(form_data.username, form_data.password, "user", request, session)
     _set_refresh_cookie(response, refresh_token, "user")
@@ -174,7 +176,7 @@ async def login_users(
 
 
 @auth_router.post("/refresh-token", response_model=RefreshTokenResponse)
-async def refresh_user_session(request: Request, response: Response, session: SessionDep):
+async def refresh_user_session(request: Request, response: Response, session: SessionDep, _: RefreshRateLimitDep):
     return await _refresh_from_cookie(request, response, "user", session)
 
 
@@ -189,6 +191,7 @@ async def login_admin(
     form_data: OAuth2PasswordRequestFormDep,
     session: SessionDep,
     request: Request,
+    _: LoginRateLimitDep,
 ):
     payload, refresh_token = await _authenticate(form_data.username, form_data.password, "admin", request, session)
     _set_refresh_cookie(response, refresh_token, "admin")
@@ -196,7 +199,7 @@ async def login_admin(
 
 
 @auth_router.post("/admin/refresh-token", response_model=RefreshTokenResponse)
-async def refresh_admin_session(request: Request, response: Response, session: SessionDep):
+async def refresh_admin_session(request: Request, response: Response, session: SessionDep, _: RefreshRateLimitDep):
     return await _refresh_from_cookie(request, response, "admin", session)
 
 

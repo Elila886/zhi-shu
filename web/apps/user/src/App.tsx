@@ -29,6 +29,11 @@ import {
   consumeNdjson,
   type ChatMessage,
   type ChatThread,
+  type LeaveBalance,
+  type LeaveRequest,
+  type LeaveTransition,
+  type LeaveType,
+  type NotificationPage,
   type PublicConfig,
   type StreamEvent,
   type ThreadDocument,
@@ -400,6 +405,8 @@ function ChatWorkspace({ modelName, documentExtensions }: { modelName: string; d
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState<string[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [leaveDraft, setLeaveDraft] = useState<LeaveRequest | null>(null);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const controllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -408,12 +415,23 @@ function ChatWorkspace({ modelName, documentExtensions }: { modelName: string; d
     queryFn: () => api.request<ChatMessage[]>(`/chat/${routeThreadId}`),
     enabled: Boolean(routeThreadId),
   });
+  const leaveRequests = useQuery({
+    queryKey: ["leave-requests"],
+    queryFn: () => api.request<LeaveRequest[]>("/leave/requests"),
+    enabled: Boolean(routeThreadId),
+    refetchInterval: 15_000,
+  });
+  const notifications = useQuery({
+    queryKey: ["leave-notifications"], queryFn: () => api.request<NotificationPage>("/leave/notifications"),
+    enabled: Boolean(routeThreadId), refetchInterval: 15_000,
+  });
   useEffect(() => {
     setMessages(routeThreadId ? historyQuery.data || [] : []);
   }, [routeThreadId, historyQuery.data]);
   useEffect(() => {
     setStreamingText(""); setSteps([]); setError("");
   }, [routeThreadId]);
+  useEffect(() => { setLeaveDraft(null); }, [routeThreadId]);
 
   async function ensureThread(text: string, pendingFiles: File[]) {
     if (routeThreadId) return routeThreadId;
@@ -470,6 +488,9 @@ function ChatWorkspace({ modelName, documentExtensions }: { modelName: string; d
           if (event.type === "llm_chunk") {
             partialResponse += String(event.content || "");
             setStreamingText(partialResponse);
+          } else if (event.type === "leave_confirmation_required") {
+            setLeaveDraft(event.request as LeaveRequest);
+            void queryClient.invalidateQueries({ queryKey: ["leave-requests"] });
           } else if (event.type === "tool_call" || event.type === "tool_result") {
             setSteps((current) => [...current, event]);
           } else if (event.type === "error") {
@@ -509,6 +530,9 @@ function ChatWorkspace({ modelName, documentExtensions }: { modelName: string; d
     () => streamingText ? [...messages, { role: "ai", content: streamingText } satisfies ChatMessage] : messages,
     [messages, streamingText],
   );
+  const leaveRequestItems = Array.isArray(leaveRequests.data) ? leaveRequests.data : [];
+  const notificationItems = Array.isArray(notifications.data?.items) ? notifications.data.items : [];
+  const workflowRequest = leaveDraft || leaveRequestItems.find((item) => item.chat_thread_id === routeThreadId && ["draft", "pending_approval"].includes(item.status));
 
   return (
     <section className="chat-workspace">
@@ -532,6 +556,13 @@ function ChatWorkspace({ modelName, documentExtensions }: { modelName: string; d
             ))}
           </div>
         )}
+        {leaveRequestItems.filter((item) => item.chat_thread_id === routeThreadId).map((item) => (
+          <section className={`leave-status ${item.status}`} key={item.id}>
+            <b>请假申请：{item.leave_type_name} · {item.duration_days} 天</b>
+            <span>{item.start_date} {item.start_period === "am" ? "上午" : "下午"} 至 {item.end_date} {item.end_period === "am" ? "上午" : "下午"} · {item.status}</span>
+          </section>
+        ))}
+        {notificationItems.length > 0 && <button className="leave-notice" onClick={() => setNotificationsOpen(true)}>通知中心{notifications.data?.unread ? `（${notifications.data.unread} 条未读）` : ""}</button>}
         {uploading.map((name) => <div className="upload-progress" key={name}><Spinner />正在上传 {name}…</div>)}
         {error && <div className="chat-error" role="alert">{error}</div>}
       </div>
@@ -551,17 +582,78 @@ function ChatWorkspace({ modelName, documentExtensions }: { modelName: string; d
               if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); }
             }}
             placeholder="输入问题，或拖入资料以建立本会话知识库…"
-            disabled={generating}
+            disabled={generating || Boolean(workflowRequest)}
             rows={1}
           />
           {generating ? (
             <button className="send-button stop-button" onClick={stop} aria-label="停止生成"><Square size={15} fill="currentColor" /></button>
           ) : (
-            <button className="send-button" onClick={() => void send()} disabled={!prompt.trim() && !files.length} aria-label="发送"><Send size={18} /></button>
+            <button className="send-button" onClick={() => void send()} disabled={Boolean(workflowRequest) || (!prompt.trim() && !files.length)} aria-label="发送"><Send size={18} /></button>
           )}
         </div>
         <p className="composer-note">知识回答可能存在误差，请结合原始资料核验。</p>
       </div>
+      {leaveDraft && <LeaveConfirmationDialog api={api} request={leaveDraft} onDone={(warning) => { setLeaveDraft(null); if (warning) setError(warning); void queryClient.invalidateQueries({ queryKey: ["leave-requests"] }); void queryClient.invalidateQueries({ queryKey: ["chat-history", routeThreadId] }); }} />}
+      {notificationsOpen && <div className="leave-dialog-backdrop" role="presentation"><section className="leave-dialog" role="dialog" aria-modal="true" aria-label="通知中心"><header><div><h2>通知中心</h2><p>请假状态会每 15 秒自动更新。</p></div><button type="button" onClick={() => setNotificationsOpen(false)} aria-label="关闭"><X /></button></header><div className="leave-notification-list">{notificationItems.length ? notificationItems.map((item) => <button className={`leave-notice ${item.read_at ? "read" : ""}`} key={item.id} onClick={() => void api.request(`/leave/notifications/${item.id}/read`, { method: "POST" }).then(() => queryClient.invalidateQueries({ queryKey: ["leave-notifications"] }))}><b>{item.title}</b><span>{item.body}</span></button>) : <p>暂无通知。</p>}</div></section></div>}
     </section>
   );
+}
+
+function LeaveConfirmationDialog({ api, request, onDone }: { api: ReturnType<typeof useAuth>["api"]; request: LeaveRequest; onDone: (warning?: string) => void }) {
+  const [leaveTypeId, setLeaveTypeId] = useState(request.leave_type_id);
+  const [startDate, setStartDate] = useState(request.start_date); const [endDate, setEndDate] = useState(request.end_date);
+  const [startPeriod, setStartPeriod] = useState<"am" | "pm">(request.start_period); const [endPeriod, setEndPeriod] = useState<"am" | "pm">(request.end_period);
+  const [reason, setReason] = useState(request.reason); const [error, setError] = useState(""); const finished = useRef(false);
+  const types = useQuery({ queryKey: ["leave-types"], queryFn: () => api.request<LeaveType[]>("/leave/types") });
+  const previewYear = /^\d{4}/.test(startDate) ? startDate.slice(0, 4) : String(new Date().getFullYear());
+  const balances = useQuery({ queryKey: ["leave-balances", previewYear], queryFn: () => api.request<LeaveBalance[]>(`/leave/balances?year=${previewYear}`) });
+  const cancel = useMutation({ mutationFn: () => api.request(`/leave/requests/${request.id}/cancel`, { method: "POST" }) });
+  const confirm = useMutation({ mutationFn: () => api.request<LeaveTransition>(`/leave/requests/${request.id}/confirm`, { method: "POST", body: JSON.stringify({ leave_type_id: leaveTypeId, start_date: startDate, end_date: endDate, start_period: startPeriod, end_period: endPeriod, reason, version: request.version, idempotency_key: crypto.randomUUID() }) }) });
+  const leaveTypeItems = Array.isArray(types.data) ? types.data : [];
+  const selectedType = leaveTypeItems.find((item) => item.id === leaveTypeId);
+  const preview = previewLeaveDuration(startDate, endDate, startPeriod, endPeriod, selectedType?.allow_half_days !== false);
+  const selectedBalance = Array.isArray(balances.data) ? balances.data.find((item) => item.leave_type_id === leaveTypeId) : undefined;
+  const cancelDraft = () => { if (finished.current) return; finished.current = true; void cancel.mutateAsync().catch(() => undefined).finally(onDone); };
+  useEffect(() => {
+    const heartbeat = window.setInterval(() => { void api.request(`/leave/requests/${request.id}/heartbeat`, { method: "POST" }).catch(() => undefined); }, 15_000);
+    const pagehide = () => {
+      if (!finished.current) { finished.current = true; void api.authorizedFetch(`/leave/requests/${request.id}/cancel`, { method: "POST", keepalive: true }).catch(() => undefined); }
+    };
+    window.addEventListener("pagehide", pagehide);
+    return () => { window.clearInterval(heartbeat); window.removeEventListener("pagehide", pagehide); if (!finished.current) pagehide(); };
+  }, [api, request.id]);
+  useEffect(() => {
+    if (selectedType && !selectedType.allow_half_days) {
+      setStartPeriod("am"); setEndPeriod("pm");
+    }
+  }, [selectedType?.allow_half_days]);
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setError("");
+    if (preview.error) { setError(preview.error); return; }
+    try {
+      const result = await confirm.mutateAsync(); finished.current = true;
+      const workflowError = result.events.find((item) => item.type === "leave_workflow_error");
+      onDone(workflowError?.content);
+    }
+    catch (caught) { setError(errorMessage(caught)); }
+  }
+  return <div className="leave-dialog-backdrop" role="presentation"><form className="leave-dialog" onSubmit={(event) => void submit(event)} role="dialog" aria-modal="true" aria-label="确认请假申请">
+    <header><div><h2>确认请假申请</h2><p>提交后将通知其他管理员审批。</p></div><button type="button" onClick={cancelDraft} aria-label="取消"><X /></button></header>
+    <table><tbody><tr><th>申请人</th><td>当前登录员工</td></tr><tr><th>假期类型</th><td><select value={leaveTypeId} onChange={(e) => setLeaveTypeId(e.target.value)}>{leaveTypeItems.map((type) => <option value={type.id} key={type.id}>{type.name}</option>)}</select></td></tr><tr><th>开始时间</th><td><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /><select value={startPeriod} disabled={selectedType?.allow_half_days === false} onChange={(e) => setStartPeriod(e.target.value as "am" | "pm")}><option value="am">上午</option>{selectedType?.allow_half_days !== false && <option value="pm">下午</option>}</select></td></tr><tr><th>结束时间</th><td><input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /><select value={endPeriod} disabled={selectedType?.allow_half_days === false} onChange={(e) => setEndPeriod(e.target.value as "am" | "pm")}>{selectedType?.allow_half_days !== false && <option value="am">上午</option>}<option value="pm">下午</option></select></td></tr><tr><th>预计时长</th><td>{preview.error || `${preview.days} 天（确认时服务端重新计算）`}</td></tr><tr><th>请假原因</th><td><textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} /></td></tr></tbody></table>
+    {selectedBalance && !preview.error && <p className="leave-balance">当前可用余额：{selectedBalance.remaining_days} 天；预计提交后：{Math.max(0, Number(selectedBalance.remaining_days) - preview.days)} 天</p>}{error && <div className="form-error">{error}</div>}
+    <footer><Button type="button" onClick={cancelDraft} disabled={cancel.isPending || confirm.isPending}>取消</Button><Button className="primary-button" disabled={cancel.isPending || confirm.isPending}>{confirm.isPending ? "正在提交..." : "确认提交"}</Button></footer>
+  </form></div>;
+}
+
+function previewLeaveDuration(startValue: string, endValue: string, startPeriod: "am" | "pm", endPeriod: "am" | "pm", allowHalfDays = true) {
+  const start = new Date(`${startValue}T00:00:00`); const end = new Date(`${endValue}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return { days: 0, error: "请填写有效的起止日期。" };
+  if (start.getFullYear() !== end.getFullYear()) return { days: 0, error: "一次请假必须位于同一自然年度。" };
+  if (end < start) return { days: 0, error: "结束日期不能早于开始日期。" };
+  if (start.getDay() === 0 || start.getDay() === 6 || end.getDay() === 0 || end.getDay() === 6) return { days: 0, error: "起止日期必须为工作日。" };
+  if (!allowHalfDays && (startPeriod !== "am" || endPeriod !== "pm")) return { days: 0, error: "该假期类型不支持半天请假。" };
+  if (start.getTime() === end.getTime() && startPeriod === "pm" && endPeriod === "am") return { days: 0, error: "同日结束时段不能早于开始时段。" };
+  let days = 0; const cursor = new Date(start);
+  while (cursor <= end) { if (cursor.getDay() !== 0 && cursor.getDay() !== 6) { if (cursor.getTime() === start.getTime()) days += startPeriod === "am" ? 1 : 0.5; else if (cursor.getTime() === end.getTime()) days += endPeriod === "pm" ? 1 : 0.5; else days += 1; } cursor.setDate(cursor.getDate() + 1); }
+  return { days, error: "" };
 }

@@ -48,6 +48,14 @@ class ChatStreamResponse(StreamingResponse):
         return ""
 
     async def _handle_updates_stream(self, chunk: dict[str, Any]) -> AsyncGenerator[str, Any]:
+        if "__interrupt__" in chunk:
+            for interrupt_value in chunk["__interrupt__"]:
+                value = getattr(interrupt_value, "value", interrupt_value)
+                if isinstance(value, dict):
+                    yield json.dumps(value, default=str) + "\n"
+                else:
+                    yield json.dumps({"type": "leave_workflow_error", "content": "审批流程已暂停。"}) + "\n"
+            return
         for node_output in chunk.values():
             if "messages" not in node_output:
                 continue

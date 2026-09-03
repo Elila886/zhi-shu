@@ -86,7 +86,7 @@ async def delete_thread(
 
     try:
         logger.info(f"Attempting to delete documents related to thread_id {thread_id}")
-        deleted_chunks = await delete_document_chunks_by_thread_id(thread_id)
+        deleted_chunks = await delete_document_chunks_by_thread_id(thread_id=thread_id, user_id=user_id)
         logger.info("Successfully deleted {} document chunks for thread {}.", deleted_chunks, thread_id)
     except Exception as e:
         logger.error(f"Failed to delete documents related to thread {thread_id} from PGVector: {str(e)}")

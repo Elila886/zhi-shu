@@ -1,7 +1,8 @@
+import asyncio
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from langchain.embeddings import init_embeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import Docx2txtLoader, PyPDFLoader, TextLoader
@@ -29,6 +30,8 @@ vector_store = PGVector(
     async_mode=True,
 )
 
+_vector_store_initialization_lock = asyncio.Lock()
+
 
 text_splitter = RecursiveCharacterTextSplitter(
     chunk_size=1000,
@@ -44,6 +47,65 @@ DOCUMENT_LOADER_MAPPING: dict[str, type[BaseLoader]] = {
 }
 
 allowd_extensions = list(DOCUMENT_LOADER_MAPPING.keys())
+
+
+def ownership_metadata_filter(user_id: UUID | str | None, thread_id: UUID | str | None) -> dict[str, str]:
+    """Build the mandatory metadata predicate for user-owned vectors.
+
+    Metadata is deliberately normalized as UUIDs here rather than trusting a
+    caller-provided string.  A missing or malformed scope is a server-side
+    configuration error and must never degrade into a broader vector search.
+    """
+    try:
+        normalized_user_id = str(UUID(str(user_id)))
+        normalized_thread_id = str(UUID(str(thread_id)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ValueError("Both user_id and thread_id are required for vector retrieval.") from exc
+
+    # langchain-postgres combines multiple top-level metadata fields with AND.
+    return {"user_id": normalized_user_id, "thread_id": normalized_thread_id}
+
+
+async def ensure_vector_store_initialized() -> None:
+    """Serialize PGVector's lazy async initialization for first concurrent use."""
+    async with _vector_store_initialization_lock:
+        try:
+            await vector_store.__apost_init__()  # type: ignore[attr-defined]
+        except Exception:
+            # The upstream initializer marks itself ready before its I/O has
+            # completed. Reset that marker so a later request can retry.
+            vector_store._async_init = False  # type: ignore[attr-defined]
+            raise
+
+
+async def load_scoped_vector_documents(user_id: UUID | str | None, thread_id: UUID | str | None) -> list[Document]:
+    """Load every searchable chunk for one exact user-and-thread scope.
+
+    BM25 is deliberately built from the same PGVector rows used by dense
+    retrieval.  Do not relax either JSONB predicate: thread-only matching can
+    expose another user's private document chunks.
+    """
+    metadata_filter = ownership_metadata_filter(user_id, thread_id)
+    await ensure_vector_store_initialized()
+    async with vector_store._make_async_session() as session:  # type: ignore[attr-defined]
+        collection = await vector_store.aget_collection(session)
+        if collection is None:
+            return []
+
+        statement = select(vector_store.EmbeddingStore).where(  # type: ignore[attr-defined]
+            vector_store.EmbeddingStore.collection_id == collection.uuid,  # type: ignore[attr-defined]
+            vector_store.EmbeddingStore.cmetadata["user_id"].astext == metadata_filter["user_id"],  # type: ignore[attr-defined]
+            vector_store.EmbeddingStore.cmetadata["thread_id"].astext == metadata_filter["thread_id"],  # type: ignore[attr-defined]
+        )
+        rows = (await session.execute(statement)).scalars().all()
+        return [
+            Document(
+                id=str(row.id),
+                page_content=row.document or "",
+                metadata=row.cmetadata or {},
+            )
+            for row in rows
+        ]
 
 
 async def _load_and_split_documents(file_path: Path) -> list[Document]:
@@ -88,18 +150,6 @@ async def index_document_to_pgvector(file_path: Path, document_id: UUID, thread_
         raise
 
 
-async def search_documents_in_pgvector(query: str = "", k: int = 1, filter: dict | None = None) -> list[Document]:
-    """Search documents in PGVector based on query, k and filter."""
-
-    logger.info(f"Search documents with query: {query}, k: {k}, filter: {filter} in PGVector.")
-    documents = await vector_store.asimilarity_search(query, k=k, filter=filter)
-    if not documents:
-        logger.info(f"No documents found for query: {query} and filter: {filter} in PGVector.")
-    else:
-        logger.info(f"Found {len(documents)} document chunks for query: {query} and filter: {filter} in PGVector.")
-    return documents
-
-
 async def delete_document_from_pgvector(document_ids: list[str]) -> None:
     """Delete documents from PGVector based on Document ID"""
 
@@ -108,7 +158,7 @@ async def delete_document_from_pgvector(document_ids: list[str]) -> None:
     logger.info(f"Successfully deleted {len(document_ids)} document chunks from PGVector.")
 
 
-async def delete_document_chunks_by_document_id(document_id: UUID) -> int:
+async def delete_document_chunks_by_document_id(*, document_id: UUID, thread_id: UUID, user_id: UUID) -> int:
     """Delete every vector chunk belonging to a document without embedding a query.
 
     Deletion must not use similarity search: it is both incomplete for multi-chunk
@@ -123,6 +173,8 @@ async def delete_document_chunks_by_document_id(document_id: UUID) -> int:
         statement = delete(vector_store.EmbeddingStore).where(  # type: ignore[attr-defined]
             vector_store.EmbeddingStore.collection_id == collection.uuid,  # type: ignore[attr-defined]
             vector_store.EmbeddingStore.cmetadata["document_id"].astext == str(document_id),  # type: ignore[attr-defined]
+            vector_store.EmbeddingStore.cmetadata["thread_id"].astext == str(thread_id),  # type: ignore[attr-defined]
+            vector_store.EmbeddingStore.cmetadata["user_id"].astext == str(user_id),  # type: ignore[attr-defined]
         )
         result = await session.execute(statement)
         await session.commit()
@@ -131,7 +183,7 @@ async def delete_document_chunks_by_document_id(document_id: UUID) -> int:
         return deleted_count
 
 
-async def delete_document_chunks_by_thread_id(thread_id: UUID) -> int:
+async def delete_document_chunks_by_thread_id(*, thread_id: UUID, user_id: UUID) -> int:
     """Delete every vector chunk belonging to a thread without similarity search."""
     async with vector_store._make_async_session() as session:  # type: ignore[attr-defined]
         collection = await vector_store.aget_collection(session)
@@ -142,6 +194,7 @@ async def delete_document_chunks_by_thread_id(thread_id: UUID) -> int:
         statement = delete(vector_store.EmbeddingStore).where(  # type: ignore[attr-defined]
             vector_store.EmbeddingStore.collection_id == collection.uuid,  # type: ignore[attr-defined]
             vector_store.EmbeddingStore.cmetadata["thread_id"].astext == str(thread_id),  # type: ignore[attr-defined]
+            vector_store.EmbeddingStore.cmetadata["user_id"].astext == str(user_id),  # type: ignore[attr-defined]
         )
         result = await session.execute(statement)
         await session.commit()

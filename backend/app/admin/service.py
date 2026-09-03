@@ -21,6 +21,7 @@ def _snapshot(user: User) -> dict:
     return {
         "id": str(user.id), "email": user.email, "role": user.role,
         "is_active": user.is_active, "disabled_reason": user.disabled_reason,
+        "can_query_personnel": user.can_query_personnel,
     }
 
 
@@ -64,7 +65,11 @@ async def list_users(session: AsyncSession, page: int, page_size: int, query: st
     thread_counts = dict((await session.execute(select(Thread.user_id, func.count(Thread.id)).group_by(Thread.user_id))).all())
     rows = []
     for user in users:
-        row = {column.name: _json_value(getattr(user, column.name)) for column in User.__table__.columns if column.name != "password_hash"}
+        row = {
+            column.name: _json_value(getattr(user, column.name))
+            for column in User.__table__.columns
+            if column.name not in {"password_hash", "can_query_personnel"}
+        }
         row["thread_count"] = int(thread_counts.get(user.id, 0))
         rows.append(row)
     return {"items": rows, "total": total, "page": page, "page_size": page_size}
@@ -84,6 +89,8 @@ async def update_user(session: AsyncSession, actor: User, user_id: UUID, values:
     before = _snapshot(target)
     for key, value in values.items():
         setattr(target, key, value)
+    if role_change and target.role == "user":
+        target.can_query_personnel = False
     if target.is_active:
         target.disabled_reason = None
     if not target.is_active or role_change:

@@ -103,6 +103,18 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .tool-steps > div, .tool-steps details { padding: 10px 12px; border: 1px solid #dbe7e8; border-radius: 10px; background: #f9fcfc; }
 .tool-steps code { margin-left: 6px; }
 .upload-progress, .chat-error { display: flex; align-items: center; gap: 8px; padding: 10px 13px; border-radius: 10px; background: #eef8f6; color: #16706f; font-size: 13px; }
+.leave-status, .leave-notice { display: grid; gap: 4px; padding: 12px 14px; border: 1px solid #b9ddd9; border-radius: 12px; background: #f0fbf9; color: #175d63; font-size: 13px; }
+.leave-status.rejected, .leave-status.cancelled { border-color: #f0c4c1; background: #fff4f3; color: #9e3a35; }
+.leave-status.approved { border-color: #b7dfc7; background: #f1fbf4; color: #19713d; }
+.leave-status span { color: inherit; opacity: .82; font-size: 12px; }
+.leave-notice { display: block; border-color: #c9d9f1; background: #f4f8ff; color: #315d97; }
+.leave-dialog-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 18px; background: rgba(4, 24, 32, .56); backdrop-filter: blur(2px); }
+.leave-dialog { width: min(650px, 100%); max-height: calc(100vh - 36px); overflow: auto; padding: 22px; border-radius: 16px; background: #fff; box-shadow: 0 26px 70px rgba(0,0,0,.3); }
+.leave-dialog header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.leave-dialog h2 { margin: 0; color: var(--ink); font-size: 19px; }.leave-dialog header p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }.leave-dialog header button { border: 0; background: transparent; color: #6e8391; }
+.leave-dialog table { width: 100%; margin-top: 15px; border-collapse: collapse; font-size: 13px; }.leave-dialog th, .leave-dialog td { padding: 9px 7px; text-align: left; vertical-align: top; border-bottom: 1px solid #edf1f1; }.leave-dialog th { width: 104px; color: #506a78; font-weight: 600; }
+.leave-dialog input, .leave-dialog select, .leave-dialog textarea { max-width: 100%; margin-right: 7px; padding: 7px 8px; border: 1px solid #cbdcde; border-radius: 8px; outline: none; color: var(--ink); }.leave-dialog textarea { width: 100%; resize: vertical; }.leave-dialog input:focus, .leave-dialog select:focus, .leave-dialog textarea:focus { border-color: #72bdb8; box-shadow: 0 0 0 3px rgba(17,124,136,.1); }
+.leave-balance { margin: 13px 0 0; color: #25636a; font-size: 13px; }.leave-dialog footer { display: flex; justify-content: flex-end; gap: 9px; padding-top: 16px; }.leave-dialog footer .primary-button { width: auto; margin: 0; }
 .chat-error, .form-error { border: 1px solid #f1c7c5; background: #fff2f1; color: #a33d36; }
 .center-loader { display: grid; place-items: center; min-height: 100px; }
 .empty-state { min-height: 210px; display: grid; place-items: center; align-content: center; gap: 9px; color: #7b8e9c; text-align: center; }

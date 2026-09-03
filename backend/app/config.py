@@ -1,4 +1,5 @@
 import logging
+from ipaddress import IPv4Network, IPv6Network, ip_network
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -48,6 +49,12 @@ class Settings(BaseSettings):
     postgres_password: str
     postgres_database: str
     pgvector_collection_name: str
+    hybrid_dense_k: int = 8
+    hybrid_bm25_k: int = 8
+    hybrid_final_k: int = 3
+    hybrid_rrf_k: int = 60
+    hybrid_dense_weight: float = 1.0
+    hybrid_bm25_weight: float = 1.0
     super_admin_emails: list[str] = []
     frontend_origins: list[str] = [
         "http://localhost:5173",
@@ -59,6 +66,20 @@ class Settings(BaseSettings):
     cookie_samesite: Literal["lax", "strict", "none"] = "lax"
     refresh_cookie_name: str = "zhishu_refresh"
     admin_refresh_cookie_name: str = "zhishu_admin_refresh"
+    redis_url: str = "redis://localhost:6379/0"
+    rate_limit_key_prefix: str = "zhishu:traffic"
+    rate_limit_window_seconds: int = 60
+    rate_limit_ordinary_requests: int = 60
+    rate_limit_agent_requests: int = 10
+    rate_limit_upload_requests: int = 5
+    rate_limit_signup_requests: int = 5
+    rate_limit_login_ip_requests: int = 10
+    rate_limit_login_account_requests: int = 5
+    rate_limit_refresh_session_requests: int = 30
+    rate_limit_refresh_ip_requests: int = 60
+    rate_limit_public_config_requests: int = 60
+    rate_limit_failure_retry_after_seconds: int = 5
+    trusted_proxy_cidrs: list[str] = ["127.0.0.1/32", "::1/128"]
 
     @model_validator(mode="after")
     def validate_browser_security(self):
@@ -92,6 +113,38 @@ class Settings(BaseSettings):
         self.frontend_origins = normalized
         if self.environment == "production" and not self.cookie_secure:
             raise ValueError("COOKIE_SECURE must be true in production")
+        if not self.redis_url:
+            raise ValueError("REDIS_URL must not be empty")
+        positive_rate_settings = (
+            "rate_limit_window_seconds", "rate_limit_ordinary_requests", "rate_limit_agent_requests",
+            "rate_limit_upload_requests", "rate_limit_signup_requests", "rate_limit_login_ip_requests",
+            "rate_limit_login_account_requests", "rate_limit_refresh_session_requests",
+            "rate_limit_refresh_ip_requests", "rate_limit_public_config_requests",
+            "rate_limit_failure_retry_after_seconds",
+        )
+        for name in positive_rate_settings:
+            if getattr(self, name) <= 0:
+                raise ValueError(f"{name.upper()} must be greater than zero")
+        positive_hybrid_settings = (
+            "hybrid_dense_k",
+            "hybrid_bm25_k",
+            "hybrid_final_k",
+            "hybrid_rrf_k",
+        )
+        for name in positive_hybrid_settings:
+            if getattr(self, name) <= 0:
+                raise ValueError(f"{name.upper()} must be greater than zero")
+        if self.hybrid_dense_weight < 0 or self.hybrid_bm25_weight < 0:
+            raise ValueError("HYBRID_DENSE_WEIGHT and HYBRID_BM25_WEIGHT must be greater than or equal to zero")
+        if self.hybrid_dense_weight == 0 and self.hybrid_bm25_weight == 0:
+            raise ValueError("HYBRID_DENSE_WEIGHT and HYBRID_BM25_WEIGHT cannot both be zero")
+        if not self.rate_limit_key_prefix.strip():
+            raise ValueError("RATE_LIMIT_KEY_PREFIX must not be empty")
+        for cidr in self.trusted_proxy_cidrs:
+            try:
+                ip_network(cidr, strict=False)
+            except ValueError as exc:
+                raise ValueError(f"Invalid trusted proxy CIDR: {cidr!r}") from exc
         return self
 
     @property
@@ -108,6 +161,10 @@ class Settings(BaseSettings):
     def pgvector_connection(self) -> str:
         """Generate PostgreSQL connection string for PGVector."""
         return f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_database}"
+
+    @property
+    def trusted_proxy_networks(self) -> tuple[IPv4Network | IPv6Network, ...]:
+        return tuple(ip_network(cidr, strict=False) for cidr in self.trusted_proxy_cidrs)
 
     model_config = SettingsConfigDict(env_file=BASE_DIR / ".env", extra="allow")
 

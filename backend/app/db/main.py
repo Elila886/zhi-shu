@@ -29,8 +29,10 @@ async def init_db() -> None:
         # idempotent statements keep upgrades safe without dropping user data.
         for statement in (
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'user'",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_query_personnel BOOLEAN NOT NULL DEFAULT false",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ NULL",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_reason VARCHAR(255) NULL",
+            "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()",
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()",
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'completed'",
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS chunk_count INTEGER NOT NULL DEFAULT 0",

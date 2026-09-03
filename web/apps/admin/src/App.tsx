@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   BookOpen,
+  ClipboardCheck,
+  CalendarDays,
   Database,
   FileWarning,
   LayoutDashboard,
@@ -26,8 +28,15 @@ import {
   type AdminHealth,
   type AdminOverview,
   type AdminUser,
+  type ApprovalTask,
+  type ApprovalTaskPage,
   type AuditLog,
+  type LeaveType,
+  type LeaveTransition,
+  type NotificationPage,
   type Paginated,
+  type PersonnelProfile,
+  type PersonnelProfileDetail,
   type Role,
 } from "@zhishu/shared";
 import { useAdminAuth } from "./auth";
@@ -94,6 +103,8 @@ function AdminShell() {
     ["/overview", <LayoutDashboard />, "数据概览"],
     ["/users", <Users />, "用户管理"],
     ["/documents", <BookOpen />, "知识库管理"],
+    ["/approvals", <ClipboardCheck />, "审批中心"],
+    ["/leave-config", <CalendarDays />, "假期配置"],
     ...(user?.role === "super_admin" ? [["/audit", <Activity />, "操作审计"]] : []),
   ] as [string, React.ReactNode, string][];
   return (
@@ -113,6 +124,8 @@ function AdminShell() {
           <Route path="/overview" element={<Overview />} />
           <Route path="/users" element={<UsersPage />} />
           <Route path="/documents" element={<DocumentsPage />} />
+          <Route path="/approvals" element={<ApprovalsPage />} />
+          <Route path="/leave-config" element={<LeaveConfigPage />} />
           <Route path="/audit" element={user?.role === "super_admin" ? <AuditPage /> : <Navigate to="/overview" replace />} />
           <Route path="*" element={<Navigate to="/overview" replace />} />
         </Routes>
@@ -137,11 +150,38 @@ function Overview() {
   return <div className="admin-page"><PageHeader title="数据概览" copy="查看用户、会话与知识库运行状态" />
     {overview.isLoading ? <PanelLoader /> : overview.error ? <ErrorPanel error={overview.error} /> : <div className="metrics">{cards.map(([icon,label,value]) => <article key={String(label)}><div>{icon}</div><span>{label}</span><b>{value}</b></article>)}</div>}
     <section className="panel"><div className="panel-title"><div><h2>系统服务状态</h2><p>核心服务实时健康检查</p></div></div>
-      <div className="health-grid">{Object.entries({ backend: "后端 API", database: "PostgreSQL", pgvector: "PGVector" }).map(([key,label]) => {
+      <div className="health-grid">{Object.entries({ backend: "后端 API", database: "PostgreSQL", pgvector: "PGVector", redis: "Redis", traffic_governance: "流量治理" }).map(([key,label]) => {
         const value = health.data?.[key as keyof AdminHealth]; return <div key={key}><span className={value === "healthy" ? "healthy" : "unhealthy"}>●</span><div><b>{label}</b><small>{value === "healthy" ? "运行正常" : health.isLoading ? "检查中" : "不可用"}</small></div></div>;
       })}</div>
     </section>
   </div>;
+}
+
+function ApprovalsPage() {
+  const { api } = useAdminAuth(); const queryClient = useQueryClient();
+  const [selected, setSelected] = useState<ApprovalTask | null>(null); const [decision, setDecision] = useState<"approved" | "rejected">("approved"); const [comment, setComment] = useState(""); const [error, setError] = useState(""); const [page, setPage] = useState(1);
+  const tasks = useQuery({ queryKey: ["approval-tasks", page], queryFn: () => api.request<ApprovalTaskPage>(`/admin/approval-tasks?status=pending&page=${page}&page_size=20`), refetchInterval: 15_000 });
+  const notifications = useQuery({ queryKey: ["admin-leave-notifications"], queryFn: () => api.request<NotificationPage>("/admin/notifications"), refetchInterval: 15_000 });
+  const taskItems = Array.isArray(tasks.data) ? tasks.data : tasks.data?.items || [];
+  const detail = useQuery({ queryKey: ["approval-task", selected?.id], queryFn: () => api.request<ApprovalTask>(`/admin/approval-tasks/${selected!.id}`), enabled: Boolean(selected), refetchInterval: selected ? 15_000 : false });
+  const decide = useMutation({ mutationFn: (task: ApprovalTask) => api.request<LeaveTransition>(`/admin/approval-tasks/${task.id}/decision`, { method: "POST", body: JSON.stringify({ decision, comment, version: task.version, idempotency_key: crypto.randomUUID() }) }), onSuccess: (result) => { const warning = result.events.find((item) => item.type === "leave_workflow_error")?.content; setSelected(null); setComment(""); setError(warning || ""); void queryClient.invalidateQueries({ queryKey: ["approval-tasks"] }); }, onError: (caught) => setError(message(caught)) });
+  const retryResume = useMutation({ mutationFn: (requestId: string) => api.request(`/admin/leave-requests/${requestId}/resume`, { method: "POST" }), onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["approval-tasks"] }) });
+  return <div className="admin-page"><PageHeader title="审批中心" copy="处理员工请假申请；同一任务由首位提交的管理员完成。" />
+    <section className="panel"><div className="table-meta">待处理 {tasks.data?.total || taskItems.length} 条 · 未读通知 {notifications.data?.unread || 0}</div>{notifications.data?.items.filter((item) => !item.read_at).slice(0, 3).map((item) => <button className="table-action" key={item.id} onClick={() => void api.request(`/admin/notifications/${item.id}/read`, { method: "POST" }).then(() => queryClient.invalidateQueries({ queryKey: ["admin-leave-notifications"] }))}>{item.title}：{item.body}</button>)}{tasks.isLoading ? <PanelLoader /> : tasks.error ? <ErrorPanel error={tasks.error} /> : !taskItems.length ? <EmptyState icon={<ClipboardCheck />}>当前没有待处理的请假审批。</EmptyState> : <><div className="table-wrap"><table><thead><tr><th>员工</th><th>假期</th><th>时间</th><th>原因</th><th></th></tr></thead><tbody>{taskItems.map((task) => <tr key={task.id}><td><b>{task.requester_username}</b><small>{task.requester_email}</small></td><td>{task.leave_request.leave_type_name} / {task.leave_request.duration_days} 天</td><td>{task.leave_request.start_date} 至 {task.leave_request.end_date}</td><td>{task.leave_request.reason}</td><td><button className="table-action" onClick={() => { setSelected(task); setDecision("approved"); setComment(""); setError(""); }}>处理</button></td></tr>)}</tbody></table></div><div className="table-meta"><Button disabled={page === 1} onClick={() => setPage((value) => value - 1)}>上一页</Button> 第 {page} 页 <Button disabled={page * 20 >= (tasks.data?.total || 0)} onClick={() => setPage((value) => value + 1)}>下一页</Button></div></>}</section>
+    {selected && <div className="dialog-backdrop"><section className="dialog compact" role="dialog" aria-modal="true"><header><div><h2>处理请假审批</h2><p>{(detail.data || selected).requester_username} · {(detail.data || selected).leave_request.leave_type_name} · {(detail.data || selected).leave_request.duration_days} 天</p></div><button onClick={() => setSelected(null)}><X /></button></header><div className="dialog-section">{detail.isLoading ? <PanelLoader /> : <><label>决定</label><select value={decision} onChange={(e) => setDecision(e.target.value as "approved" | "rejected")}><option value="approved">批准</option><option value="rejected">拒绝</option></select><label>审批意见{decision === "rejected" ? "（必填）" : "（可选）"}</label><input value={comment} onChange={(e) => setComment(e.target.value)} placeholder="填写审批意见" />{(detail.data || selected).leave_request.resume_status === "resume_pending" && <Button onClick={() => retryResume.mutate((detail.data || selected).leave_request.id)} disabled={retryResume.isPending}>重试工作流恢复</Button>}{error && <div className="alert error">{error}</div>}<Button className={decision === "rejected" ? "danger" : "primary"} disabled={decide.isPending || (decision === "rejected" && !comment.trim())} onClick={() => decide.mutate(detail.data || selected)}>{decide.isPending ? "正在提交..." : decision === "approved" ? "确认批准" : "确认拒绝"}</Button></>}</div></section></div>}
+  </div>;
+}
+
+function LeaveConfigPage() {
+  const { api } = useAdminAuth(); const queryClient = useQueryClient();
+  const [code, setCode] = useState(""); const [name, setName] = useState(""); const [selectedUser, setSelectedUser] = useState(""); const [selectedType, setSelectedType] = useState(""); const [days, setDays] = useState("0"); const [error, setError] = useState("");
+  const types = useQuery({ queryKey: ["admin-leave-types"], queryFn: () => api.request<LeaveType[]>("/admin/leave-types") });
+  const users = useQuery({ queryKey: ["admin-users-for-balance"], queryFn: () => api.request<Paginated<AdminUser>>("/admin/users?page_size=100") });
+  const createType = useMutation({ mutationFn: () => api.request("/admin/leave-types", { method: "POST", body: JSON.stringify({ code, name, is_active: true, allow_half_days: true }) }), onSuccess: () => { setCode(""); setName(""); void queryClient.invalidateQueries({ queryKey: ["admin-leave-types"] }); } });
+  const disableType = useMutation({ mutationFn: (type: LeaveType) => api.request(`/admin/leave-types/${type.id}`, { method: "PUT", body: JSON.stringify({ ...type, is_active: false }) }), onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["admin-leave-types"] }), onError: (caught) => setError(message(caught)) });
+  const setBalance = useMutation({ mutationFn: () => api.request(`/admin/leave-balances/${selectedUser}`, { method: "PUT", body: JSON.stringify({ leave_type_id: selectedType, year: new Date().getFullYear(), entitled_days: Number(days) }) }) });
+  const validDays = /^\d+(\.5)?$/.test(days);
+  return <div className="admin-page"><PageHeader title="假期配置" copy="维护假期类型和员工年度额度。已使用或预占额度不会被覆盖。" /><section className="panel"><div className="panel-title"><div><h2>假期类型</h2><p>已被引用的类型只能停用，不能被重新启用或改写规则。</p></div></div><div className="filters"><input placeholder="代码，如 annual_leave" value={code} onChange={(e) => setCode(e.target.value)} /><input placeholder="名称，如 年假" value={name} onChange={(e) => setName(e.target.value)} /><Button onClick={() => createType.mutate()} disabled={!code || !name || createType.isPending}>新增类型</Button></div>{types.data && <div className="table-wrap"><table><thead><tr><th>代码</th><th>名称</th><th>状态</th><th>半天</th><th></th></tr></thead><tbody>{types.data.map((type) => <tr key={type.id}><td>{type.code}</td><td>{type.name}</td><td>{type.is_active ? "启用" : "停用"}</td><td>{type.allow_half_days ? "支持" : "不支持"}</td><td>{type.is_active && <button className="table-action" onClick={() => disableType.mutate(type)} disabled={disableType.isPending}>停用</button>}</td></tr>)}</tbody></table></div>}{error && <div className="alert error">{error}</div>}</section><section className="panel"><div className="panel-title"><div><h2>员工年度额度</h2><p>额度不得低于该员工已使用和已预占总额，且只能按 0.5 天递增。</p></div></div><div className="filters"><select value={selectedUser} onChange={(e) => setSelectedUser(e.target.value)}><option value="">选择员工</option>{users.data?.items.map((user) => <option value={user.id} key={user.id}>{user.username}</option>)}</select><select value={selectedType} onChange={(e) => setSelectedType(e.target.value)}><option value="">选择类型</option>{types.data?.map((type) => <option value={type.id} key={type.id}>{type.name}</option>)}</select><input type="number" min="0" step="0.5" value={days} onChange={(e) => setDays(e.target.value)} /><Button onClick={() => setBalance.mutate()} disabled={!selectedUser || !selectedType || !validDays || setBalance.isPending}>保存额度</Button></div>{!validDays && <div className="alert error">额度必须是非负的 0.5 天倍数。</div>}{setBalance.error && <div className="alert error">{message(setBalance.error)}</div>}</section></div>;
 }
 
 function UsersPage() {
@@ -159,6 +199,23 @@ function UsersPage() {
     mutationFn: ({ id, password }: { id: string; password: string }) => api.request(`/admin/users/${id}/reset-password`, { method: "POST", body: JSON.stringify({ new_password: password }) }),
     onSuccess: () => setNotice("密码已重置，该用户的现有会话已撤销。"),
   });
+  const personnel = useQuery({
+    queryKey: ["personnel-profile", selected?.id],
+    queryFn: () => api.request<PersonnelProfileDetail>(`/admin/users/${selected!.id}/personnel-profile`),
+    enabled: actor?.role === "super_admin" && Boolean(selected),
+  });
+  const savePersonnel = useMutation({
+    mutationFn: async ({ id, profile, enabled, role: targetRole }: { id: string; profile: Omit<PersonnelProfile, "user_id">; enabled: boolean; role: Role }) => {
+      await api.request(`/admin/users/${id}/personnel-profile`, { method: "PUT", body: JSON.stringify(profile) });
+      if (targetRole === "user") return;
+      return api.request(`/admin/users/${id}/personnel-query-permission`, { method: "PATCH", body: JSON.stringify({ enabled }) });
+    },
+    onSuccess: () => {
+      setNotice("员工档案与查询权限已更新");
+      void queryClient.invalidateQueries({ queryKey: ["personnel-profile", selected?.id] });
+      void queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+    },
+  });
   return <div className="admin-page"><PageHeader title="用户管理" copy="管理账号状态、角色与登录凭据" />
     {notice && <div className="alert success">{notice}</div>}
     <section className="panel"><div className="filters"><label className="search-field"><Search size={17}/><input placeholder="用户名或邮箱" value={query} onChange={(e) => setQuery(e.target.value)} /></label>
@@ -166,11 +223,11 @@ function UsersPage() {
       <select value={active} onChange={(e) => setActive(e.target.value)}><option value="">全部状态</option><option value="true">启用</option><option value="false">禁用</option></select></div>
       {users.isLoading ? <PanelLoader /> : users.error ? <ErrorPanel error={users.error} /> : <><div className="table-meta">共 {users.data?.total || 0} 位用户</div><div className="table-wrap"><table><thead><tr><th>用户</th><th>角色</th><th>状态</th><th>会话数</th><th>最近登录</th><th></th></tr></thead><tbody>{users.data?.items.map((item) => <tr key={item.id}><td><b>{item.username}</b><small>{item.email}</small></td><td><span className={`role-badge ${item.role}`}>{item.role}</span></td><td><span className={item.is_active ? "status-active" : "status-disabled"}>● {item.is_active ? "启用" : "禁用"}</span></td><td>{item.thread_count}</td><td>{formatDate(item.last_login_at ?? null)}</td><td><button className="table-action" onClick={() => { setSelected(item); setNotice(""); }}>管理</button></td></tr>)}</tbody></table></div></>}
     </section>
-    {selected && <UserDialog user={selected} actorRole={actor!.role} pending={update.isPending || resetPassword.isPending} error={update.error || resetPassword.error} onClose={() => setSelected(null)} onSave={(payload) => update.mutate({ id: selected.id, payload })} onReset={(password) => resetPassword.mutate({ id: selected.id, password })} />}
+    {selected && <UserDialog user={selected} actorRole={actor!.role} pending={update.isPending || resetPassword.isPending || savePersonnel.isPending} error={update.error || resetPassword.error} personnel={personnel.data ?? null} personnelLoading={personnel.isLoading} personnelError={personnel.error || savePersonnel.error} onClose={() => setSelected(null)} onSave={(payload) => update.mutate({ id: selected.id, payload })} onReset={(password) => resetPassword.mutate({ id: selected.id, password })} onSavePersonnel={(profile, enabled) => savePersonnel.mutate({ id: selected.id, profile, enabled, role: selected.role })} />}
   </div>;
 }
 
-function UserDialog({ user, actorRole, pending, error, onClose, onSave, onReset }: { user: AdminUser; actorRole: Role; pending: boolean; error: unknown; onClose: () => void; onSave: (payload: object) => void; onReset: (password: string) => void }) {
+function UserDialog({ user, actorRole, pending, error, personnel, personnelLoading, personnelError, onClose, onSave, onReset, onSavePersonnel }: { user: AdminUser; actorRole: Role; pending: boolean; error: unknown; personnel: PersonnelProfileDetail | null; personnelLoading: boolean; personnelError: unknown; onClose: () => void; onSave: (payload: object) => void; onReset: (password: string) => void; onSavePersonnel: (profile: Omit<PersonnelProfile, "user_id">, enabled: boolean) => void }) {
   const [role, setRole] = useState<Role>(user.role); const [active, setActive] = useState(user.is_active); const [reason, setReason] = useState(user.disabled_reason || "");
   const [password, setPassword] = useState(""); const [confirm, setConfirm] = useState(""); const [localError, setLocalError] = useState("");
   const displayedError = localError || (error ? message(error) : "");
@@ -181,8 +238,22 @@ function UserDialog({ user, actorRole, pending, error, onClose, onSave, onReset 
       <Button className="primary" disabled={pending || (!active && !reason.trim())} onClick={() => onSave({ role, is_active: active, disabled_reason: active ? null : reason })}>保存修改</Button></div>
     <div className="dialog-section"><h3>重置密码</h3><label>新密码</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /><label>确认新密码</label><input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
       <Button disabled={pending} onClick={() => { if (password.length < 8 || password.length > 32) return setLocalError("密码长度需为 8 至 32 个字符。"); if (password !== confirm) return setLocalError("两次密码输入不一致。"); setLocalError(""); onReset(password); }}>确认重置</Button></div>
+    {actorRole === "super_admin" && <div className="dialog-section"><h3>员工档案与人员查询</h3>{personnelLoading ? <PanelLoader /> : personnelError ? <div className="alert error">{message(personnelError)}</div> : <PersonnelDirectorySection key={`${user.id}-${personnel?.profile?.employee_no || "new"}`} profile={personnel?.profile || null} enabled={personnel?.can_query_personnel || false} pending={pending} allowQueryPermission={user.role === "admin" || user.role === "super_admin"} onSave={onSavePersonnel} />}</div>}
     {displayedError && <div className="alert error">{displayedError}</div>}
   </section></div>;
+}
+
+function PersonnelDirectorySection({ profile, enabled, pending, onSave, allowQueryPermission }: { profile: PersonnelProfile | null; enabled: boolean; pending: boolean; onSave: (profile: Omit<PersonnelProfile, "user_id">, enabled: boolean) => void; allowQueryPermission: boolean }) {
+  const [fullName, setFullName] = useState(profile?.full_name || ""); const [employeeNo, setEmployeeNo] = useState(profile?.employee_no || "");
+  const [department, setDepartment] = useState(profile?.department || ""); const [jobTitle, setJobTitle] = useState(profile?.job_title || "");
+  const [workEmail, setWorkEmail] = useState(profile?.work_email || ""); const [workPhone, setWorkPhone] = useState(profile?.work_phone || "");
+  const [employmentStatus, setEmploymentStatus] = useState<"active" | "inactive">(profile?.employment_status || "active"); const [queryEnabled, setQueryEnabled] = useState(enabled); const [error, setError] = useState("");
+  function save() {
+    if (![fullName, employeeNo, department, jobTitle].every((value) => value.trim())) return setError("姓名、工号、部门和职位均为必填项。");
+    setError("");
+    onSave({ full_name: fullName, employee_no: employeeNo, department, job_title: jobTitle, work_email: workEmail.trim() || null, work_phone: workPhone.trim() || null, employment_status: employmentStatus }, queryEnabled);
+  }
+  return <><p>仅超级管理员可维护。工作邮箱和工作电话为空时，查询结果会显示“未录入”。</p><label htmlFor="personnel-full-name">姓名</label><input id="personnel-full-name" value={fullName} onChange={(e) => setFullName(e.target.value)} maxLength={80} /><label htmlFor="personnel-employee-no">工号</label><input id="personnel-employee-no" value={employeeNo} onChange={(e) => setEmployeeNo(e.target.value)} maxLength={40} /><label htmlFor="personnel-department">部门</label><input id="personnel-department" value={department} onChange={(e) => setDepartment(e.target.value)} maxLength={80} /><label htmlFor="personnel-job-title">职位</label><input id="personnel-job-title" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} maxLength={80} /><label htmlFor="personnel-work-email">工作邮箱（可选）</label><input id="personnel-work-email" type="email" value={workEmail} onChange={(e) => setWorkEmail(e.target.value)} maxLength={254} /><label htmlFor="personnel-work-phone">工作电话（可选）</label><input id="personnel-work-phone" value={workPhone} onChange={(e) => setWorkPhone(e.target.value)} maxLength={32} /><label htmlFor="personnel-employment-status">在职状态</label><select id="personnel-employment-status" value={employmentStatus} onChange={(e) => setEmploymentStatus(e.target.value as "active" | "inactive")}><option value="active">在职</option><option value="inactive">离职</option></select>{allowQueryPermission && <label className="toggle-row"><input type="checkbox" checked={queryEnabled} onChange={(e) => setQueryEnabled(e.target.checked)} />允许该管理员在聊天中查询人员基本信息</label>}{error && <div className="alert error">{error}</div>}<Button className="primary" disabled={pending} onClick={save}>{pending ? "正在保存..." : "保存员工档案与查询权限"}</Button></>;
 }
 
 function DocumentsPage() {

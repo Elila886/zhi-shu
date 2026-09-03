@@ -7,6 +7,8 @@ export class ApiError extends Error {
     message: string,
     public readonly status: number,
     public readonly detail?: unknown,
+    public readonly code?: string,
+    public readonly retryAfter?: number,
   ) {
     super(message);
     this.name = "ApiError";
@@ -24,9 +26,13 @@ const authPrefix = (surface: Surface) => (surface === "admin" ? "/auth/admin" : 
 
 async function readError(response: Response): Promise<ApiError> {
   let detail: unknown;
+  let code: string | undefined;
+  let bodyRetryAfter: number | undefined;
   try {
-    const body = (await response.json()) as { detail?: unknown };
+    const body = (await response.json()) as { detail?: unknown; code?: unknown; retry_after?: unknown };
     detail = body.detail;
+    code = typeof body.code === "string" ? body.code : undefined;
+    bodyRetryAfter = typeof body.retry_after === "number" ? body.retry_after : undefined;
   } catch {
     detail = await response.text().catch(() => undefined);
   }
@@ -36,7 +42,10 @@ async function readError(response: Response): Promise<ApiError> {
     const first = detail[0] as { msg?: string };
     message = first.msg || message;
   }
-  return new ApiError(message, response.status, detail);
+  const headerRetryAfter = Number(response.headers.get("Retry-After"));
+  const retryAfter = Number.isFinite(headerRetryAfter) && headerRetryAfter > 0 ? headerRetryAfter : bodyRetryAfter;
+  if (response.status === 429 && retryAfter) message = `请求过于频繁，请在 ${retryAfter} 秒后重试。`;
+  return new ApiError(message, response.status, detail, code, retryAfter);
 }
 
 export function createApiClient(options: ClientOptions) {

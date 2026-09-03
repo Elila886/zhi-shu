@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.db.checkpointer import get_checkpointer
 from fastapi import HTTPException
@@ -8,11 +8,11 @@ from langchain_core.runnables import RunnableConfig
 
 from .langgraph_agent import build_retrival_graph
 from .schemas import Message, PromptInput
-async def chat_stream(thread_id: UUID, prompt_input: PromptInput, user_id: UUID) -> AsyncIterator:
+async def chat_stream(thread_id: UUID, prompt_input: PromptInput, user_id: UUID, client_ip: str | None = None) -> AsyncIterator:
     """
     Streams the agent's execution steps and final response.
     """
-    config = RunnableConfig(configurable={"thread_id": str(thread_id), "user_id": str(user_id)})
+    config = RunnableConfig(configurable={"thread_id": str(thread_id), "user_id": str(user_id), "model_name": prompt_input.model_name, "leave_run_id": str(uuid4()), "client_ip": client_ip})
     checkpointer = await get_checkpointer()
     graph = build_retrival_graph(checkpointer, prompt_input.model_name)
 

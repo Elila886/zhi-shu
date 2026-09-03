@@ -8,13 +8,13 @@ from loguru import logger
 from app.auth.dependencies import CurrentUserDep
 from app.config import BASE_DIR
 from app.db.main import SessionDep
+from app.traffic_governance.dependencies import OrdinaryRateLimitDep, UploadRateLimitDep
 from app.db.models import Document
 from app.db.pgvector_utils import (
     DOCUMENT_LOADER_MAPPING,
     delete_document_chunks_by_document_id,
     delete_document_from_pgvector,
     index_document_to_pgvector,
-    search_documents_in_pgvector,
 )
 
 from . import service as document_service
@@ -25,13 +25,13 @@ document_router = APIRouter()
 
 
 @document_router.get("/{thread_id}", response_model=list[DocumentPublic])
-async def get_documents(thread_id: UUID, current_user: CurrentUserDep, session: SessionDep):
+async def get_documents(thread_id: UUID, current_user: CurrentUserDep, session: SessionDep, _: OrdinaryRateLimitDep):
     await thread_service.get_thread(thread_id, current_user.id, session)
     return await document_service.get_documents(thread_id, session)
 
 
 @document_router.post("/upload/{thread_id}", response_model=DocumentUploadResponse)
-async def upload_document(thread_id: UUID, file: UploadFile, current_user: CurrentUserDep, session: SessionDep):
+async def upload_document(thread_id: UUID, file: UploadFile, current_user: CurrentUserDep, session: SessionDep, _: UploadRateLimitDep):
     user_id = current_user.id
     await thread_service.get_thread(thread_id, user_id, session)
     if file.filename is None:
@@ -89,13 +89,17 @@ async def upload_document(thread_id: UUID, file: UploadFile, current_user: Curre
 
 
 @document_router.delete("/{document_id}", response_model=DocumentDeleteResponse)
-async def delete_document(document_id: UUID, current_user: CurrentUserDep, session: SessionDep):
+async def delete_document(document_id: UUID, current_user: CurrentUserDep, session: SessionDep, _: OrdinaryRateLimitDep):
     """Delete a document from the database and PGVector."""
     document = await session.get(Document, document_id)
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
     await thread_service.get_thread(document.thread_id, current_user.id, session)
-    deleted_chunks = await delete_document_chunks_by_document_id(document_id)
+    deleted_chunks = await delete_document_chunks_by_document_id(
+        document_id=document_id,
+        thread_id=document.thread_id,
+        user_id=current_user.id,
+    )
     await document_service.delete_document(document_id, session)
     logger.info(f"Successfully deleted document {document_id} from database.")
     message = f"Successfully deleted document {document_id} from database and {deleted_chunks} vector chunks"

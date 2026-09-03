@@ -17,7 +17,8 @@ services:
       backend:
         condition: service_healthy
     networks:
-      - langgraph_network
+      langgraph_network:
+        ipv4_address: 172.30.0.13
     restart: on-failure:3
 
   admin-preview:
@@ -38,5 +39,6 @@ services:
       backend:
         condition: service_healthy
     networks:
-      - langgraph_network
+      langgraph_network:
+        ipv4_address: 172.30.0.14
     restart: on-failure:3

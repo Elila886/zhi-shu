@@ -40,6 +40,20 @@ describe("consumeNdjson", () => {
 });
 
 describe("createApiClient", () => {
+  it("turns a rate-limit response into a retry-aware API error", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(
+      JSON.stringify({ code: "rate_limit_exceeded", detail: "请求过于频繁", retry_after: 12 }),
+      { status: 429, headers: { "Retry-After": "12" } },
+    ));
+    const client = createApiClient({ surface: "user", getToken: () => "token", setToken: vi.fn(), onSessionExpired: vi.fn() });
+    await expect(client.request("/threads/")).rejects.toMatchObject({
+      status: 429,
+      code: "rate_limit_exceeded",
+      retryAfter: 12,
+      message: "请求过于频繁，请在 12 秒后重试。",
+    });
+  });
+
   it("refreshes once after a 401 and retries with the new in-memory token", async () => {
     let token: string | null = null;
     const expired = vi.fn();

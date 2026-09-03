@@ -75,6 +75,26 @@ class AuthContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "COOKIE_SECURE"):
             production.validate_browser_security()
 
+    def test_hybrid_retrieval_configuration_rejects_invalid_values(self):
+        for field, value in (
+            ("hybrid_dense_k", 0),
+            ("hybrid_bm25_k", 0),
+            ("hybrid_final_k", 0),
+            ("hybrid_rrf_k", 0),
+            ("hybrid_dense_weight", -0.1),
+            ("hybrid_bm25_weight", -0.1),
+        ):
+            invalid = settings.model_copy(deep=True)
+            setattr(invalid, field, value)
+            with self.assertRaisesRegex(ValueError, "HYBRID"):
+                invalid.validate_browser_security()
+
+        disabled = settings.model_copy(deep=True)
+        disabled.hybrid_dense_weight = 0
+        disabled.hybrid_bm25_weight = 0
+        with self.assertRaisesRegex(ValueError, "cannot both be zero"):
+            disabled.validate_browser_security()
+
 
 class StreamContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_provider_error_becomes_ndjson_error_event(self):

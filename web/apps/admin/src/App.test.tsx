@@ -85,6 +85,33 @@ describe("admin application", () => {
     ));
   });
 
+  it("lets a super administrator maintain a personnel profile and query permission", async () => {
+    authState = { ...authState, user: { id: "root-1", email: "root@example.com", username: "root", role: "super_admin" } };
+    request.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path.startsWith("/admin/users?")) return { items: [{ id: "user-1", username: "manager", email: "manager@example.com", role: "admin", is_active: true, is_verified: true, disabled_reason: null, last_login_at: null, created_at: "2026-08-29", updated_at: "2026-08-29", first_name: "", last_name: "", thread_count: 0 }], total: 1, page: 1, page_size: 100 };
+      if (path === "/admin/users/user-1/personnel-profile" && !init?.method) return { profile: null, can_query_personnel: false };
+      return { message: "ok" };
+    });
+    renderApp("/users");
+    await screen.findByText("manager");
+    fireEvent.click(screen.getByRole("button", { name: "管理" }));
+    await screen.findByLabelText("姓名");
+    fireEvent.change(screen.getByLabelText("姓名"), { target: { value: "张三" } });
+    fireEvent.change(screen.getByLabelText("工号"), { target: { value: "E-1001" } });
+    fireEvent.change(screen.getByLabelText("部门"), { target: { value: "工程部" } });
+    fireEvent.change(screen.getByLabelText("职位"), { target: { value: "工程师" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "允许该管理员在聊天中查询人员基本信息" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存员工档案与查询权限" }));
+    await waitFor(() => expect(request).toHaveBeenCalledWith(
+      "/admin/users/user-1/personnel-profile",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ full_name: "张三", employee_no: "E-1001", department: "工程部", job_title: "工程师", work_email: null, work_phone: null, employment_status: "active" }) }),
+    ));
+    await waitFor(() => expect(request).toHaveBeenCalledWith(
+      "/admin/users/user-1/personnel-query-permission",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ enabled: true }) }),
+    ));
+  });
+
   it("requires explicit confirmation before deleting a document", async () => {
     request.mockImplementation(async (path: string) => {
       if (path.startsWith("/admin/documents?")) return { items: [{ id: "doc-1", file_name: "guide.pdf", status: "completed", chunk_count: 3, error_message: null, uploaded_at: "2026-08-29", thread_id: "thread-1", user_id: "user-1", username: "member", email: "member@example.com" }], total: 1, page: 1, page_size: 100 };

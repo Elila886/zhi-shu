@@ -15,6 +15,17 @@ services:
     networks:
       - zhishu_test_network
 
+  redis-test:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks:
+      - zhishu_test_network
+
   backend-test:
     build:
       context: ./backend
@@ -27,6 +38,12 @@ services:
       - MODEL_PROVIDER=openai
       - MODEL_NAMES=["test-model"]
       - EMBEDDINGS_MODEL_NAME=text-embedding-3-small
+      - HYBRID_DENSE_K=8
+      - HYBRID_BM25_K=8
+      - HYBRID_FINAL_K=3
+      - HYBRID_RRF_K=60
+      - HYBRID_DENSE_WEIGHT=1.0
+      - HYBRID_BM25_WEIGHT=1.0
       - TOKEN_BEARER_URL=/api/v1/auth/login
       - JWT_SECRET=test-only-jwt-secret-that-is-not-used-outside-tests
       - JWT_ALGORITHM=HS256
@@ -37,6 +54,8 @@ services:
       - COOKIE_SAMESITE=lax
       - REFRESH_COOKIE_NAME=zhishu_refresh
       - ADMIN_REFRESH_COOKIE_NAME=zhishu_admin_refresh
+      - REDIS_URL=redis://redis-test:6379/0
+      - RATE_LIMIT_KEY_PREFIX=zhishu:test:traffic
       - POSTGRES_HOST=postgres-test
       - POSTGRES_PORT=5432
       - POSTGRES_USER=test
@@ -46,6 +65,8 @@ services:
       - SUPER_ADMIN_EMAILS=[]
     depends_on:
       postgres-test:
+        condition: service_healthy
+      redis-test:
         condition: service_healthy
     networks:
       - zhishu_test_network
